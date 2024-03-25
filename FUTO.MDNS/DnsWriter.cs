@@ -11,21 +11,34 @@ public class DnsWriter
 
     public byte[] ToArray() => _data.ToArray();
 
-    public void WritePacket(DnsPacketHeader header, int questionCount, Action<DnsWriter, int> questionWriter, int answerCount, Action<DnsWriter, int> answerWriter, int authorityCount, Action<DnsWriter, int> authorityWriter, int additionalsCount, Action<DnsWriter, int> additionalWriter)
+    public void WritePacket(DnsPacketHeader header, 
+        int? questionCount = null, Action<DnsWriter, int>? questionWriter = null, 
+        int? answerCount = null, Action<DnsWriter, int>? answerWriter = null, 
+        int? authorityCount = null, Action<DnsWriter, int>? authorityWriter = null, 
+        int? additionalsCount = null, Action<DnsWriter, int>? additionalWriter = null)
     {
-        WriteHeader(header, questionCount, answerCount, authorityCount, additionalsCount);
+        if (questionCount != null && questionWriter == null || questionCount == null && questionWriter != null)
+            throw new Exception("When question count is given, question writer should also be given.");
+        if (answerCount != null && answerWriter == null || answerCount == null && answerWriter != null)
+            throw new Exception("When answer count is given, answer writer should also be given.");
+        if (authorityCount != null && authorityWriter == null || authorityCount == null && authorityWriter != null)
+            throw new Exception("When authority count is given, authority writer should also be given.");
+        if (additionalsCount != null && additionalWriter == null || additionalsCount == null && additionalWriter != null)
+            throw new Exception("When additionals count is given, additional writer should also be given.");
+
+        WriteHeader(header, questionCount ?? 0, answerCount ?? 0, authorityCount ?? 0, additionalsCount ?? 0);
 
         for (int i = 0; i < questionCount; i++)
-            questionWriter(this, i);
+            questionWriter?.Invoke(this, i);
 
         for (int i = 0; i < answerCount; i++)
-            answerWriter(this, i);
+            answerWriter?.Invoke(this, i);
 
         for (int i = 0; i < authorityCount; i++)
-            authorityWriter(this, i);
+            authorityWriter?.Invoke(this, i);
 
         for (int i = 0; i < additionalsCount; i++)
-            additionalWriter(this, i);
+            additionalWriter?.Invoke(this, i);
     }
 
     public void WriteHeader(DnsPacketHeader header, int questionCount, int answerCount, int authorityCount, int additionalsCount)
@@ -101,7 +114,7 @@ public class DnsWriter
     {
         WriteDomainName(value.Name);
         Write((ushort)value.Type);
-        Write((ushort)((value.CacheFlush ? 1u : 0u) << 15) | (ushort)value.Class);
+        Write((ushort)((ushort)((value.QueryUnicast ? 1u : 0u) << 15) | (ushort)value.Class));
     }
 
     public void Write(double value)

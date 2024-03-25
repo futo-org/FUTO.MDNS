@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text.Json;
 using static FUTO.MDNS.DnsReader;
 
 namespace FUTO.MDNS;
@@ -45,6 +44,7 @@ public class ServiceRecordAggregator
     private readonly Dictionary<string, CachedDnsTxtRecord> _cachedTxtRecords = new();
     private readonly Dictionary<string, List<CachedDnsPtrRecord>> _cachedPtrRecords = new();
     private readonly Dictionary<string, CachedDnsSrvRecord> _cachedSrvRecords = new();
+    private readonly List<DnsService> _currentServices = new();
     private CancellationTokenSource? _cts;
 
     public event Action<List<DnsService>>? ServicesUpdated;
@@ -61,48 +61,45 @@ public class ServiceRecordAggregator
 
         _ = Task.Run(async () =>
         {
+            List<DnsService> currentServices;
             while (!_cts.IsCancellationRequested)
             {
                 var now = DateTime.Now;
 
-                lock (_cachedAddressRecords)
+                lock (_currentServices)
                 {
                     foreach (var pair in _cachedAddressRecords)
                         pair.Value.RemoveAll(v => now > v.ExpirationTime);
-                }
 
-                lock (_cachedTxtRecords)
-                {
-                    var expiredRecords = new List<string>();
+                    var expiredTxtRecords = new List<string>();
                     foreach (var pair in _cachedTxtRecords)
                     {
                         if (now > pair.Value.ExpirationTime)
-                            expiredRecords.Add(pair.Key);
+                            expiredTxtRecords.Add(pair.Key);
                     }
 
-                    foreach (var expiredRecord in expiredRecords)
+                    foreach (var expiredRecord in expiredTxtRecords)
                         _cachedTxtRecords.Remove(expiredRecord);
-                }
 
-                lock (_cachedSrvRecords)
-                {
-                    var expiredRecords = new List<string>();
+                    var expiredSrvRecords = new List<string>();
                     foreach (var pair in _cachedSrvRecords)
                     {
                         if (now > pair.Value.ExpirationTime)
-                            expiredRecords.Add(pair.Key);
+                            expiredSrvRecords.Add(pair.Key);
                     }
 
-                    foreach (var expiredRecord in expiredRecords)
+                    foreach (var expiredRecord in expiredSrvRecords)
                         _cachedSrvRecords.Remove(expiredRecord);
-                }
 
-                lock (_cachedPtrRecords)
-                {
                     foreach (var pair in _cachedPtrRecords)
                         pair.Value.RemoveAll(v => now > v.ExpirationTime);
+
+                    currentServices = GetCurrentServices();
+                    _currentServices.Clear();
+                    _currentServices.AddRange(currentServices);
                 }
 
+                ServicesUpdated?.Invoke(currentServices);
                 await Task.Delay(TimeSpan.FromSeconds(5));
             }
         });
@@ -126,24 +123,25 @@ public class ServiceRecordAggregator
         var srvRecords = dnsResourceRecords.Where(r => r.Type == ResourceRecordType.SRV).Select(r => new { Record = r, Content = r.GetDataReader().ReadSRVRecord() }).ToList();
         var ptrRecords = dnsResourceRecords.Where(r => r.Type == ResourceRecordType.PTR).Select(r => new { Record = r, Content = r.GetDataReader().ReadPTRRecord() }).ToList();
 
-        lock (_cachedPtrRecords)
+        List<DnsService> currentServices;
+        lock (_currentServices)
         {
             foreach (var record in ptrRecords)
             {
-                List<CachedDnsPtrRecord>? l;
-                if (!_cachedPtrRecords.TryGetValue(record.Record.Name, out l) || l == null)
+                List<CachedDnsPtrRecord>? cachedPtrRecord;
+                if (!_cachedPtrRecords.TryGetValue(record.Record.Name, out cachedPtrRecord) || cachedPtrRecord == null)
                 {
-                    l = new List<CachedDnsPtrRecord>();
-                    _cachedPtrRecords[record.Record.Name] = l;
+                    cachedPtrRecord = new List<CachedDnsPtrRecord>();
+                    _cachedPtrRecords[record.Record.Name] = cachedPtrRecord;
                 }
 
-                bool found = false;
-                for (var i = 0; i < l.Count; i++)
+                bool foundPtrRecord = false;
+                for (var i = 0; i < cachedPtrRecord.Count; i++)
                 {
-                    if (l[i].Target == record.Content.DomainName)
+                    if (cachedPtrRecord[i].Target == record.Content.DomainName)
                     {
-                        found = true;
-                        l[i] = new CachedDnsPtrRecord()
+                        foundPtrRecord = true;
+                        cachedPtrRecord[i] = new CachedDnsPtrRecord()
                         {
                             Target = record.Content.DomainName,
                             ExpirationTime = DateTime.Now.AddSeconds(record.Record.TimeToLive)
@@ -151,150 +149,185 @@ public class ServiceRecordAggregator
                     }
                 }
 
-                if (!found)
+                if (!foundPtrRecord)
                 {
-                    //If watching for services (i.e. record.Record.Name == '_airplay._tcp.local'), query for record.Content.DomainName 'Homepod A._airplay._tcp.local' to get more information about the airplay device?
-
-                    File.AppendAllLines("ptr-records.txt", ["New ptr record found " + record.Content.DomainName + " -> " + record.Record.Name]);
-
-                    l.Add(new CachedDnsPtrRecord()
+                    cachedPtrRecord.Add(new CachedDnsPtrRecord()
                     {
                         Target = record.Content.DomainName,
                         ExpirationTime = DateTime.Now.AddSeconds(record.Record.TimeToLive)
                     });
                 }
-            }
-        }
 
-        lock (_cachedAddressRecords)
-        {
-            foreach (var record in aRecords)
-            {
-                List<CachedDnsAddressRecord>? l;
-                if (!_cachedAddressRecords.TryGetValue(record.Record.Name, out l) || l == null)
+                foreach (var aRecord in aRecords)
                 {
-                    l = new List<CachedDnsAddressRecord>();
-                    _cachedAddressRecords[record.Record.Name] = l;
-                }
-
-                var newRecord = new CachedDnsAddressRecord()
-                {
-                    Address = record.Content.Address,
-                    ExpirationTime = DateTime.Now.AddSeconds(record.Record.TimeToLive)
-                };
-
-                bool found = false;
-                for (var i = 0; i < l.Count; i++)
-                {
-                    if (l[i].Address.Equals(newRecord.Address))
+                    List<CachedDnsAddressRecord>? cachedARecord;
+                    if (!_cachedAddressRecords.TryGetValue(aRecord.Record.Name, out cachedARecord) || cachedARecord == null)
                     {
-                        found = true;
-                        l[i] = newRecord;
+                        cachedARecord = new List<CachedDnsAddressRecord>();
+                        _cachedAddressRecords[aRecord.Record.Name] = cachedARecord;
                     }
-                }
 
-                if (!found)
-                    l.Add(newRecord);
-            }
-
-            foreach (var record in aaaaRecords)
-            {
-                List<CachedDnsAddressRecord>? l;
-                if (!_cachedAddressRecords.TryGetValue(record.Record.Name, out l) || l == null)
-                {
-                    l = new List<CachedDnsAddressRecord>();
-                    _cachedAddressRecords[record.Record.Name] = l;
-                }
-
-                var newRecord = new CachedDnsAddressRecord()
-                {
-                    Address = record.Content.Address,
-                    ExpirationTime = DateTime.Now.AddSeconds(record.Record.TimeToLive)
-                };
-
-                bool found = false;
-                for (var i = 0; i < l.Count; i++)
-                {
-                    if (l[i].Address.Equals(newRecord.Address))
+                    var newARecord = new CachedDnsAddressRecord()
                     {
-                        found = true;
-                        l[i] = newRecord;
+                        Address = aRecord.Content.Address,
+                        ExpirationTime = DateTime.Now.AddSeconds(aRecord.Record.TimeToLive)
+                    };
+
+                    bool foundARecord = false;
+                    for (var i = 0; i < cachedARecord.Count; i++)
+                    {
+                        if (cachedARecord[i].Address.Equals(newARecord.Address))
+                        {
+                            foundARecord = true;
+                            cachedARecord[i] = newARecord;
+                        }
                     }
+
+                    if (!foundARecord)
+                        cachedARecord.Add(newARecord);
                 }
 
-                if (!found)
-                    l.Add(newRecord);
-            }
-        }
-
-        lock (_cachedTxtRecords)
-        {
-            foreach (var record in txtRecords)
-            {
-                _cachedTxtRecords[record.Record.Name] = new CachedDnsTxtRecord()
+                foreach (var aaaaRecord in aaaaRecords)
                 {
-                    Texts = record.Content.Texts,
-                    ExpirationTime = DateTime.Now.AddSeconds(record.Record.TimeToLive)
+                    List<CachedDnsAddressRecord>? cachedAaaaRecord;
+                    if (!_cachedAddressRecords.TryGetValue(aaaaRecord.Record.Name, out cachedAaaaRecord) || cachedAaaaRecord == null)
+                    {
+                        cachedAaaaRecord = new List<CachedDnsAddressRecord>();
+                        _cachedAddressRecords[aaaaRecord.Record.Name] = cachedAaaaRecord;
+                    }
+
+                    var newAaaaRecord = new CachedDnsAddressRecord()
+                    {
+                        Address = aaaaRecord.Content.Address,
+                        ExpirationTime = DateTime.Now.AddSeconds(aaaaRecord.Record.TimeToLive)
+                    };
+
+                    bool foundAaaaRecord = false;
+                    for (var i = 0; i < cachedAaaaRecord.Count; i++)
+                    {
+                        if (cachedAaaaRecord[i].Address.Equals(newAaaaRecord.Address))
+                        {
+                            foundAaaaRecord = true;
+                            cachedAaaaRecord[i] = newAaaaRecord;
+                        }
+                    }
+
+                    if (!foundAaaaRecord)
+                        cachedAaaaRecord.Add(newAaaaRecord);
+                }
+            }
+
+            foreach (var txtRecord in txtRecords)
+            {
+                _cachedTxtRecords[txtRecord.Record.Name] = new CachedDnsTxtRecord()
+                {
+                    Texts = txtRecord.Content.Texts,
+                    ExpirationTime = DateTime.Now.AddSeconds(txtRecord.Record.TimeToLive)
                 };
             }
-        }
 
-        lock (_cachedSrvRecords)
-        {
-            foreach (var record in srvRecords)
+            foreach (var srvRecord in srvRecords)
             {
-                _cachedSrvRecords[record.Record.Name] = new CachedDnsSrvRecord()
+                _cachedSrvRecords[srvRecord.Record.Name] = new CachedDnsSrvRecord()
                 {
-                    Service = record.Content,
-                    ExpirationTime = DateTime.Now.AddSeconds(record.Record.TimeToLive)
+                    Service = srvRecord.Content,
+                    ExpirationTime = DateTime.Now.AddSeconds(srvRecord.Record.TimeToLive)
                 };
             }
+
+            currentServices = GetCurrentServices();
+            _currentServices.Clear();
+            _currentServices.AddRange(currentServices);
         }
 
-        UpdateServices();
+        ServicesUpdated?.Invoke(currentServices);
     }
 
-    private void UpdateServices()
+    public List<DnsQuestion> GetAllQuestions(string serviceName)
     {
-        List<DnsService> services;
-        lock (_cachedSrvRecords)
+        List<DnsQuestion> questions = new List<DnsQuestion>();
+        lock (_currentServices)
         {
-            services = _cachedSrvRecords.Select(v => new DnsService
+            if (!_cachedPtrRecords.TryGetValue(serviceName, out var servicePtrRecords))
+                return new List<DnsQuestion>();
+
+            var ptrWithoutSrvRecord = _cachedPtrRecords[serviceName]?.Where(v => !_cachedSrvRecords.ContainsKey(v.Target))?.Select(v => v.Target).ToList() ?? [];
+            var incompleteCurrentServices = _currentServices.Where(s => (s.Addresses.Count == 0 || s.Texts.Count == 0) && s.Name.EndsWith(serviceName)).Select(s => s.Name).ToList();
+            var servicesToRequest = ptrWithoutSrvRecord.Concat(incompleteCurrentServices).Distinct();
+            return servicesToRequest.SelectMany(s =>
             {
-                Name = v.Key,
-                Target = v.Value.Service.Target,
-                Port = v.Value.Service.Port
+                
+
+                return new DnsQuestion[]
+                {
+                    new DnsQuestion()
+                    {
+                        Name = s,
+                        Type = QuestionType.PTR,
+                        Class = QuestionClass.IN,
+                        QueryUnicast = false
+                    },
+                    new DnsQuestion()
+                    {
+                        Name = s,
+                        Type = QuestionType.TXT,
+                        Class = QuestionClass.IN,
+                        QueryUnicast = false
+                    },
+                    new DnsQuestion()
+                    {
+                        Name = s,
+                        Type = QuestionType.A,
+                        Class = QuestionClass.IN,
+                        QueryUnicast = false
+                    },
+                    new DnsQuestion()
+                    {
+                        Name = s,
+                        Type = QuestionType.AAAA,
+                        Class = QuestionClass.IN,
+                        QueryUnicast = false
+                    },
+                    new DnsQuestion()
+                    {
+                        Name = s,
+                        Type = QuestionType.SRV,
+                        Class = QuestionClass.IN,
+                        QueryUnicast = false
+                    }
+                };
             }).ToList();
         }
+    }
 
-        lock (_cachedAddressRecords)
+    private List<DnsService> GetCurrentServices()
+    {
+        List<DnsService> currentServices = _cachedSrvRecords.Select(v => new DnsService
         {
-            foreach (var service in services)
-            {
-                //TODO: Recursively resolve PTRs?
-                if (_cachedAddressRecords.TryGetValue(service.Target, out var cachedRecords))
-                    service.Addresses.AddRange(cachedRecords.Select(v => v.Address).ToList());
-            }
+            Name = v.Key,
+            Target = v.Value.Service.Target,
+            Port = v.Value.Service.Port
+        }).ToList();
+
+        foreach (var service in currentServices)
+        {
+            //TODO: Recursively resolve PTRs?
+            if (_cachedAddressRecords.TryGetValue(service.Target, out var cachedRecords))
+                service.Addresses.AddRange(cachedRecords.Select(v => v.Address).ToList());
         }
 
-        lock (_cachedPtrRecords)
+        foreach (var service in currentServices)
         {
-            foreach (var service in services)
-            {
-                //TODO: Recursively resolve PTRs?
-                service.Pointers.AddRange(_cachedPtrRecords.Where(w => w.Value.Any(x => x.Target == service.Name)).Select(w => w.Key).ToList());
-            }
+            //TODO: Recursively resolve PTRs?
+            service.Pointers.AddRange(_cachedPtrRecords.Where(w => w.Value.Any(x => x.Target == service.Name)).Select(w => w.Key).ToList());
         }
 
-        lock (_cachedTxtRecords)
+        foreach (var service in currentServices)
         {
-            foreach (var service in services)
-            {
-                if (_cachedTxtRecords.TryGetValue(service.Name, out var cachedRecords))
-                    service.Texts.AddRange(cachedRecords.Texts);
-            }
+            if (_cachedTxtRecords.TryGetValue(service.Name, out var cachedRecords))
+                service.Texts.AddRange(cachedRecords.Texts);
         }
 
-        ServicesUpdated?.Invoke(services);
+        return currentServices;
     }
 }

@@ -266,6 +266,10 @@ public class DnsResourceRecord : DnsResourceRecordBase<ResourceRecordType, Resou
     /// </summary>
     public uint TimeToLive { get; init; }
     /// <summary>
+    /// Specifies if cache should be flushed.
+    /// </summary>
+    public bool CacheFlush { get; init; }
+    /// <summary>
     /// The format of this information varies according to the TYPE and CLASS of the resource record. For example, the if the TYPE is A and the CLASS is IN, the RDATA field is a 4 octet ARPA Internet address.
     /// </summary>
     private readonly byte[] _data;

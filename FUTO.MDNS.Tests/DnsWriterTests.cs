@@ -24,4 +24,39 @@ public class DnsWriterTests
         writer.Write((long)3);
         CollectionAssert.AreEqual(expectedData, writer.ToArray());
     }
+
+    [TestMethod]
+    public void DnsQuestionFormat()
+    {
+        byte[] expectedBytes = [ 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x5f, 0x61, 0x69, 0x72, 0x70, 0x6c, 0x61, 0x79, 0x04, 0x5f, 0x74, 0x63, 0x70, 0x05, 0x6c, 0x6f, 0x63, 0x61, 0x6c, 0x00, 0x00, 0x0c, 0x00, 0x01 ];
+        var writer = new DnsWriter();
+        writer.WritePacket(
+            header: new DnsPacketHeader()
+            {
+                Identifier = 0,
+                QueryResponse = QueryResponse.Query,
+                Opcode = DnsOpcode.StandardQuery,
+                Truncated = false,
+                NonAuthenticatedData = false,
+                RecursionDesired = false,
+                AnswerAuthenticated = false,
+                AuthorativeAnswer = false,
+                RecursionAvailable = false,
+                ResponseCode = 0,
+            }, 
+            questionCount: 1,
+            questionWriter: (w, i) => 
+            {
+                w.Write(new DnsQuestion()
+                {
+                    Name = "_airplay._tcp.local",
+                    Type = QuestionType.PTR,
+                    Class = QuestionClass.IN,
+                    QueryUnicast = false
+                });
+            }
+        );
+
+        CollectionAssert.AreEqual(expectedBytes, writer.ToArray());
+    }
 }
