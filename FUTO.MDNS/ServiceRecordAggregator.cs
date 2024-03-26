@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using static FUTO.MDNS.DnsReader;
 
 namespace FUTO.MDNS;
@@ -122,6 +123,20 @@ public class ServiceRecordAggregator
         var aaaaRecords = dnsResourceRecords.Where(r => r.Type == ResourceRecordType.AAAA).Select(r => new { Record = r, Content = r.GetDataReader().ReadAAAARecord() }).ToList();
         var srvRecords = dnsResourceRecords.Where(r => r.Type == ResourceRecordType.SRV).Select(r => new { Record = r, Content = r.GetDataReader().ReadSRVRecord() }).ToList();
         var ptrRecords = dnsResourceRecords.Where(r => r.Type == ResourceRecordType.PTR).Select(r => new { Record = r, Content = r.GetDataReader().ReadPTRRecord() }).ToList();
+
+        var builder = new StringBuilder();
+        builder.AppendLine("Received records:");
+        foreach (var srvRecord in srvRecords)
+            builder.AppendLine($" {srvRecord.Record.Name} {srvRecord.Record.Type} {srvRecord.Record.Class} TTL {srvRecord.Record.TimeToLive}: (Port: {srvRecord.Content.Port}, Target: {srvRecord.Content.Target}, Priority: {srvRecord.Content.Priority}, Weight: {srvRecord.Content.Weight})");
+        foreach (var ptrRecord in ptrRecords)
+            builder.AppendLine($" {ptrRecord.Record.Name} {ptrRecord.Record.Type} {ptrRecord.Record.Class} TTL {ptrRecord.Record.TimeToLive}: {ptrRecord.Content.DomainName}");
+        foreach (var txtRecord in txtRecords)
+            builder.AppendLine($" {txtRecord.Record.Name} {txtRecord.Record.Type} {txtRecord.Record.Class} TTL {txtRecord.Record.TimeToLive}: {string.Join(", ", txtRecord.Content.Texts)}");
+        foreach (var aRecord in aRecords)
+            builder.AppendLine($" {aRecord.Record.Name} {aRecord.Record.Type} {aRecord.Record.Class} TTL {aRecord.Record.TimeToLive}: {aRecord.Content.Address}");
+        foreach (var aaaaRecord in aaaaRecords)
+            builder.AppendLine($" {aaaaRecord.Record.Name} {aaaaRecord.Record.Type} {aaaaRecord.Record.Class} TTL {aaaaRecord.Record.TimeToLive}: {aaaaRecord.Content.Address}");
+        File.AppendAllText("records.txt", builder.ToString());
 
         List<DnsService> currentServices;
         lock (_currentServices)
@@ -252,42 +267,10 @@ public class ServiceRecordAggregator
                 return new List<DnsQuestion>();
 
             var ptrWithoutSrvRecord = _cachedPtrRecords[serviceName]?.Where(v => !_cachedSrvRecords.ContainsKey(v.Target))?.Select(v => v.Target).ToList() ?? [];
-            var incompleteCurrentServices = _currentServices.Where(s => (s.Addresses.Count == 0 || s.Texts.Count == 0) && s.Name.EndsWith(serviceName)).Select(s => s.Name).ToList();
-            var servicesToRequest = ptrWithoutSrvRecord.Concat(incompleteCurrentServices).Distinct();
-            return servicesToRequest.SelectMany(s =>
+            questions.AddRange(ptrWithoutSrvRecord.SelectMany(s =>
             {
-                
-
                 return new DnsQuestion[]
                 {
-                    new DnsQuestion()
-                    {
-                        Name = s,
-                        Type = QuestionType.PTR,
-                        Class = QuestionClass.IN,
-                        QueryUnicast = false
-                    },
-                    new DnsQuestion()
-                    {
-                        Name = s,
-                        Type = QuestionType.TXT,
-                        Class = QuestionClass.IN,
-                        QueryUnicast = false
-                    },
-                    new DnsQuestion()
-                    {
-                        Name = s,
-                        Type = QuestionType.A,
-                        Class = QuestionClass.IN,
-                        QueryUnicast = false
-                    },
-                    new DnsQuestion()
-                    {
-                        Name = s,
-                        Type = QuestionType.AAAA,
-                        Class = QuestionClass.IN,
-                        QueryUnicast = false
-                    },
                     new DnsQuestion()
                     {
                         Name = s,
@@ -296,8 +279,40 @@ public class ServiceRecordAggregator
                         QueryUnicast = false
                     }
                 };
-            }).ToList();
+            }));
+
+            var incompleteCurrentServices = _currentServices.Where(s => s.Addresses.Count == 0 && s.Name.EndsWith(serviceName)).ToList();
+            questions.AddRange(incompleteCurrentServices.SelectMany(s =>
+            {
+                var srvRecord = _cachedSrvRecords[s.Name];
+                return new DnsQuestion[]
+                {
+                    new DnsQuestion()
+                    {
+                        Name = s.Name,
+                        Type = QuestionType.TXT,
+                        Class = QuestionClass.IN,
+                        QueryUnicast = false
+                    },
+                    new DnsQuestion()
+                    {
+                        Name = s.Target,
+                        Type = QuestionType.A,
+                        Class = QuestionClass.IN,
+                        QueryUnicast = false
+                    },
+                    new DnsQuestion()
+                    {
+                        Name = s.Target,
+                        Type = QuestionType.AAAA,
+                        Class = QuestionClass.IN,
+                        QueryUnicast = false
+                    }
+                };
+            }).ToList());
         }
+
+        return questions;
     }
 
     private List<DnsService> GetCurrentServices()

@@ -31,6 +31,8 @@ internal class Program
                 }
             };
 
+            await listener.BroadcastServiceAsync("SomeDevice", "_googlecast._tcp.local", 8009);
+
             _ = listener.RunAsync(cancellationToken);
             await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
 

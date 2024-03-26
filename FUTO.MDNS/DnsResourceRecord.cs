@@ -272,11 +272,11 @@ public class DnsResourceRecord : DnsResourceRecordBase<ResourceRecordType, Resou
     /// <summary>
     /// The format of this information varies according to the TYPE and CLASS of the resource record. For example, the if the TYPE is A and the CLASS is IN, the RDATA field is a 4 octet ARPA Internet address.
     /// </summary>
-    private readonly byte[] _data;
-    public required int DataPosition { get; init; }
-    public required int DataLength { get; init; }
+    private readonly byte[]? _data;
+    public int DataPosition { get; init; } = -1;
+    public int DataLength { get; init; } = -1;
 
-    public DnsResourceRecord(byte[] data)
+    public DnsResourceRecord(byte[]? data = null)
     {
         _data = data;
     }
@@ -310,6 +310,6 @@ public class DnsResourceRecord : DnsResourceRecordBase<ResourceRecordType, Resou
 
     public DnsReader GetDataReader()
     {
-        return new DnsReader(_data, DataPosition, DataLength);
+        return new DnsReader(_data!, DataPosition, DataLength);
     }
 }

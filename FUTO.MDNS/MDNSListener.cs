@@ -3,7 +3,9 @@ namespace FUTO.MDNS;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using static FUTO.MDNS.DnsReader;
 
+//TODO: Implement support for unicast queryies
 public class MDNSListener : IDisposable
 {
     public static readonly int MulticastPort = 5353;
@@ -22,6 +24,14 @@ public class MDNSListener : IDisposable
 
     public event Action<DnsPacket>? OnPacket;
     public event Action<List<DnsService>>? OnServicesUpdated;
+
+    private readonly object _recordLockObject = new object();
+    private readonly List<(DnsResourceRecord Record, ARecord Content)> _recordsA = new();
+    private readonly List<(DnsResourceRecord Record, AAAARecord Content)> _recordsAAAA = new();
+    private readonly List<(DnsResourceRecord Record, PTRRecord Content)> _recordsPTR = new();
+    private readonly List<(DnsResourceRecord Record, TXTRecord Content)> _recordsTXT = new();
+    private readonly List<(DnsResourceRecord Record, SRVRecord Content)> _recordsSRV = new();
+    private readonly List<BroadcastService> _services = new();
 
     public MDNSListener()
     {
@@ -58,7 +68,7 @@ public class MDNSListener : IDisposable
         }
 
         await Task.WhenAll(
-            ReceiveLoopAsync(_receiver4, _cts.Token), 
+            ReceiveLoopAsync(_receiver4, _cts.Token),
             ReceiveLoopAsync(_receiver6, _cts.Token)
         );
     }
@@ -82,10 +92,10 @@ public class MDNSListener : IDisposable
                 AnswerAuthenticated = false,
                 AuthorativeAnswer = false,
                 RecursionAvailable = false,
-                ResponseCode = 0,
-            }, 
+                ResponseCode = DnsResponseCode.NoError
+            },
             questionCount: names.Length,
-            questionWriter: (w, i) => 
+            questionWriter: (w, i) =>
             {
                 w.Write(new DnsQuestion()
                 {
@@ -105,7 +115,7 @@ public class MDNSListener : IDisposable
         Task[] tasks;
         lock (_lockObject)
         {
-            tasks = _senders.Select(async s => 
+            tasks = _senders.Select(async s =>
             {
                 try
                 {
@@ -146,8 +156,8 @@ public class MDNSListener : IDisposable
                     AnswerAuthenticated = false,
                     AuthorativeAnswer = false,
                     RecursionAvailable = false,
-                    ResponseCode = 0,
-                }, 
+                    ResponseCode = DnsResponseCode.NoError
+                },
                 questionCount: questionsForHost.Count,
                 questionWriter: (w, i) => w.Write(questionsForHost[i])
             );
@@ -206,6 +216,22 @@ public class MDNSListener : IDisposable
                 }
             }
         }
+
+        if (nics.Count > 0)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    UpdateBroadcastRecords();
+                    await BroadcastRecordsAsync();
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"Exception occurred when broadcasting records: {e.Message}, {e.StackTrace}");
+                }
+            });
+        }
     }
 
     private void OnNicsRemoved(List<NetworkInterface> nics)
@@ -216,6 +242,22 @@ public class MDNSListener : IDisposable
                 return;
 
             //TODO: Cleanup?
+        }
+
+        if (nics.Count > 0)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    UpdateBroadcastRecords();
+                    await BroadcastRecordsAsync();
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"Exception occurred when broadcasting records: {e.Message}, {e.StackTrace}");
+                }
+            });
         }
     }
 
@@ -235,14 +277,221 @@ public class MDNSListener : IDisposable
         }
     }
 
-    private void HandleResult(UdpReceiveResult result)
+    public async Task BroadcastServiceAsync(string deviceName, string serviceName, ushort port, uint ttl = 120, ushort weight = 0, ushort priority = 0, List<string>? texts = null)
+    {
+        lock (_recordLockObject)
+        {
+            _services.Add(new BroadcastService()
+            {
+                DeviceName = deviceName,
+                Port = port,
+                Priority = priority,
+                ServiceName = serviceName,
+                Texts = texts,
+                TTL = ttl,
+                Weight = weight
+            });
+        }
+
+        UpdateBroadcastRecords();
+        await BroadcastRecordsAsync();
+    }
+
+    private void UpdateBroadcastRecords()
+    {
+        lock (_recordLockObject)
+        {
+            _recordsSRV.Clear();
+            _recordsPTR.Clear();
+            _recordsA.Clear();
+            _recordsAAAA.Clear();
+            _recordsTXT.Clear();
+
+            foreach (var service in _services)
+            {
+                var id = Guid.NewGuid().ToString();
+                var deviceDomainName = $"{service.DeviceName}.{service.ServiceName}";
+                var addressName = $"{id}.local";
+
+                _recordsSRV.Add((new DnsResourceRecord()
+                {
+                    Class = ResourceRecordClass.IN,
+                    Type = ResourceRecordType.SRV,
+                    TimeToLive = service.TTL,
+                    Name = deviceDomainName,
+                    CacheFlush = false
+                }, new SRVRecord()
+                {
+                    Target = addressName,
+                    Port = service.Port,
+                    Priority = service.Priority,
+                    Weight = service.Weight
+                }));
+
+                _recordsPTR.Add((new DnsResourceRecord()
+                {
+                    Class = ResourceRecordClass.IN,
+                    Type = ResourceRecordType.PTR,
+                    TimeToLive = service.TTL,
+                    Name = service.ServiceName,
+                    CacheFlush = false
+                }, new PTRRecord()
+                {
+                    DomainName = deviceDomainName
+                }));
+
+                var addresses = _nicMonitor.Current.SelectMany(v => v.GetIPProperties()
+                    .UnicastAddresses
+                    .Select(x => x.Address)).ToList();
+
+                foreach (var address in addresses)
+                {
+                    if (address.AddressFamily == AddressFamily.InterNetwork)
+                    {
+                        _recordsA.Add((new DnsResourceRecord()
+                        {
+                            Class = ResourceRecordClass.IN,
+                            Type = ResourceRecordType.A,
+                            TimeToLive = service.TTL,
+                            Name = addressName,
+                            CacheFlush = false
+                        }, new ARecord()
+                        {
+                            Address = address
+                        }));
+                    }
+                    else if (address.AddressFamily == AddressFamily.InterNetworkV6)
+                    {
+                        _recordsAAAA.Add((new DnsResourceRecord()
+                        {
+                            Class = ResourceRecordClass.IN,
+                            Type = ResourceRecordType.AAAA,
+                            TimeToLive = service.TTL,
+                            Name = addressName,
+                            CacheFlush = false
+                        }, new AAAARecord()
+                        {
+                            Address = address
+                        }));
+                    }
+                    else
+                        Console.WriteLine($"Invalid address type: {address}.");
+                }
+
+                if (service.Texts != null)
+                {
+                    _recordsTXT.Add((new DnsResourceRecord()
+                    {
+                        Class = ResourceRecordClass.IN,
+                        Type = ResourceRecordType.TXT,
+                        TimeToLive = service.TTL,
+                        Name = deviceDomainName,
+                        CacheFlush = false
+                    }, new TXTRecord()
+                    {
+                        Texts = service.Texts
+                    }));
+                }
+            }
+        }
+    }
+
+    private async Task BroadcastRecordsAsync(List<DnsQuestion>? questions = null)
+    {
+        var writer = new DnsWriter();
+        lock (_recordLockObject)
+        {
+            List<(DnsResourceRecord Record, ARecord Content)> recordsA;
+            List<(DnsResourceRecord Record, AAAARecord Content)> recordsAAAA;
+            List<(DnsResourceRecord Record, PTRRecord Content)> recordsPTR;
+            List<(DnsResourceRecord Record, TXTRecord Content)> recordsTXT;
+            List<(DnsResourceRecord Record, SRVRecord Content)> recordsSRV;
+
+            if (questions != null)
+            {
+                recordsA = _recordsA.Where(r => questions.Any(q => q.Name == r.Record.Name && (int)q.Class == (int)r.Record.Class && (int)q.Type == (int)r.Record.Type)).ToList();
+                recordsAAAA = _recordsAAAA.Where(r => questions.Any(q => q.Name == r.Record.Name && (int)q.Class == (int)r.Record.Class && (int)q.Type == (int)r.Record.Type)).ToList();
+                recordsPTR = _recordsPTR.Where(r => questions.Any(q => q.Name == r.Record.Name && (int)q.Class == (int)r.Record.Class && (int)q.Type == (int)r.Record.Type)).ToList();
+                recordsSRV = _recordsSRV.Where(r => questions.Any(q => q.Name == r.Record.Name && (int)q.Class == (int)r.Record.Class && (int)q.Type == (int)r.Record.Type)).ToList();
+                recordsTXT = _recordsTXT.Where(r => questions.Any(q => q.Name == r.Record.Name && (int)q.Class == (int)r.Record.Class && (int)q.Type == (int)r.Record.Type)).ToList();
+            }
+            else
+            {
+                recordsA = _recordsA;
+                recordsAAAA = _recordsAAAA;
+                recordsPTR = _recordsPTR;
+                recordsSRV = _recordsSRV;
+                recordsTXT = _recordsTXT;
+            }
+
+            var answerCount = recordsA.Count + recordsAAAA.Count + recordsPTR.Count + recordsSRV.Count + recordsTXT.Count;
+            if (answerCount < 1)
+                return;
+
+            var txtOffset = recordsA.Count + recordsAAAA.Count + recordsPTR.Count + recordsSRV.Count;
+            var srvOffset = recordsA.Count + recordsAAAA.Count + recordsPTR.Count;
+            var ptrOffset = recordsA.Count + recordsAAAA.Count;
+            var aaaaOffset = recordsA.Count;
+
+            writer.WritePacket(
+                header: new DnsPacketHeader()
+                {
+                    Identifier = 0,
+                    QueryResponse = QueryResponse.Response,
+                    Opcode = DnsOpcode.StandardQuery,
+                    Truncated = false,
+                    NonAuthenticatedData = false,
+                    RecursionDesired = false,
+                    AnswerAuthenticated = false,
+                    AuthorativeAnswer = true,
+                    RecursionAvailable = false,
+                    ResponseCode = DnsResponseCode.NoError
+                },
+                answerCount: answerCount,
+                answerWriter: (w, i) =>
+                {
+                    if (i >= txtOffset)
+                    {
+                        var record = recordsTXT[i - txtOffset];
+                        w.Write(record.Record, (v) => v.Write(record.Content));
+                    }
+                    else if (i >= srvOffset)
+                    {
+                        var record = recordsSRV[i - srvOffset];
+                        w.Write(record.Record, (v) => v.Write(record.Content));
+                    }
+                    else if (i >= ptrOffset)
+                    {
+                        var record = recordsPTR[i - ptrOffset];
+                        w.Write(record.Record, (v) => v.Write(record.Content));
+                    }
+                    else if (i >= aaaaOffset)
+                    {
+                        var record = recordsAAAA[i - aaaaOffset];
+                        w.Write(record.Record, (v) => v.Write(record.Content));
+                    }
+                    else
+                    {
+                        var record = recordsA[i];
+                        w.Write(record.Record, (v) => v.Write(record.Content));
+                    }
+                }
+            );
+        }
+
+        await SendAsync(writer.ToArray());
+    }
+
+    private async void HandleResult(UdpReceiveResult result)
     {
         //Console.WriteLine($"Received packet ({result.Buffer.Length} bytes) from {result.RemoteEndPoint}:\n{result.Buffer.ToByteDump()}");
-        File.AppendAllLines("log.txt", [ $"Received packet ({result.Buffer.Length} bytes) from {result.RemoteEndPoint}:\n{result.Buffer.ToByteDump()}" ]);
+        File.AppendAllLines("log.txt", [$"Received packet ({result.Buffer.Length} bytes) from {result.RemoteEndPoint}:\n{result.Buffer.ToByteDump()}"]);
 
         try
         {
             var packet = DnsPacket.Parse(result.Buffer);
+            if (packet.Questions.Count > 0)
+                await BroadcastRecordsAsync(packet.Questions);
             _serviceRecordAggregator.Add(packet);
             OnPacket?.Invoke(packet);
         }
@@ -270,11 +519,11 @@ public class MDNSListener : IDisposable
 
             foreach (var sender in _senders)
                 sender.Dispose();
-                
+
             _senders.Clear();
         }
     }
-    
+
     public void Dispose()
     {
         Stop();

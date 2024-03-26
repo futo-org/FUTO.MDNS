@@ -42,7 +42,7 @@ public class DnsWriterTests
                 AnswerAuthenticated = false,
                 AuthorativeAnswer = false,
                 RecursionAvailable = false,
-                ResponseCode = 0,
+                ResponseCode = DnsResponseCode.NoError,
             }, 
             questionCount: 1,
             questionWriter: (w, i) => 

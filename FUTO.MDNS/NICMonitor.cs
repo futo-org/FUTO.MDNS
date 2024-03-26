@@ -58,10 +58,6 @@ namespace FUTO.MDNS
                 try
                 {
                     var currentNics = GetCurrent().ToList();
-
-                    var newNics = new List<NetworkInterface>();
-                    var removedNics = new List<NetworkInterface>();
-
                     Removed?.Invoke(_nics.Where(k => !currentNics.Any(n => k.Id == n.Id)).ToList());
                     Added?.Invoke(currentNics.Where(nic => !_nics.Any(k => k.Id == nic.Id)).ToList());
 
