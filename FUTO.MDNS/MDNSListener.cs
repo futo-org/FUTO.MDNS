@@ -485,7 +485,7 @@ public class MDNSListener : IDisposable
     private async void HandleResult(UdpReceiveResult result)
     {
         //Console.WriteLine($"Received packet ({result.Buffer.Length} bytes) from {result.RemoteEndPoint}:\n{result.Buffer.ToByteDump()}");
-        File.AppendAllLines("log.txt", [$"Received packet ({result.Buffer.Length} bytes) from {result.RemoteEndPoint}:\n{result.Buffer.ToByteDump()}"]);
+        //File.AppendAllLines("log.txt", [$"Received packet ({result.Buffer.Length} bytes) from {result.RemoteEndPoint}:\n{result.Buffer.ToByteDump()}"]);
 
         try
         {
