@@ -48,7 +48,7 @@ public class ServiceRecordAggregator
     private readonly List<DnsService> _currentServices = new();
     private CancellationTokenSource? _cts;
 
-    public event Action<List<DnsService>>? ServicesUpdated;
+    public event Action<List<DnsService>>? OnServicesUpdated;
 
     public void Start()
     {
@@ -100,7 +100,7 @@ public class ServiceRecordAggregator
                     _currentServices.AddRange(currentServices);
                 }
 
-                ServicesUpdated?.Invoke(currentServices);
+                OnServicesUpdated?.Invoke(currentServices);
                 await Task.Delay(TimeSpan.FromSeconds(5));
             }
         });
@@ -255,7 +255,7 @@ public class ServiceRecordAggregator
             _currentServices.AddRange(currentServices);
         }
 
-        ServicesUpdated?.Invoke(currentServices);
+        OnServicesUpdated?.Invoke(currentServices);
     }
 
     public List<DnsQuestion> GetAllQuestions(string serviceName)

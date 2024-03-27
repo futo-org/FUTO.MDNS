@@ -37,7 +37,7 @@ public class MDNSListener : IDisposable
     {
         _nicMonitor.Added += OnNicsAdded;
         _nicMonitor.Removed += OnNicsRemoved;
-        _serviceRecordAggregator.ServicesUpdated += (services) => OnServicesUpdated?.Invoke(services);
+        _serviceRecordAggregator.OnServicesUpdated += (services) => OnServicesUpdated?.Invoke(services);
     }
 
     public async Task RunAsync(CancellationToken cancellationToken = default)
