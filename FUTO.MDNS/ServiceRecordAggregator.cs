@@ -138,7 +138,7 @@ public class ServiceRecordAggregator
             builder.AppendLine($" {aaaaRecord.Record.Name} {aaaaRecord.Record.Type} {aaaaRecord.Record.Class} TTL {aaaaRecord.Record.TimeToLive}: {aaaaRecord.Content.Address}");
         lock (_lockObject)
         {
-            File.AppendAllText("records.txt", builder.ToString());
+            //File.AppendAllText("records.txt", builder.ToString());
         }
 
         List<DnsService> currentServices;
