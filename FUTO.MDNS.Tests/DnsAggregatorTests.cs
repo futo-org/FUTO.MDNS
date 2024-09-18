@@ -27,7 +27,7 @@ public class DnsAggregatorTests
         }
 
         int counter = 0;
-        aggregator.ServicesUpdated += (services) =>
+        aggregator.OnServicesUpdated += (services) =>
         {
             File.WriteAllText($"services-{counter++}.txt", JsonSerializer.Serialize(services.Select(v => new
             {
