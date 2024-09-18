@@ -124,7 +124,7 @@ public class ServiceRecordAggregator
         var srvRecords = dnsResourceRecords.Where(r => r.Type == ResourceRecordType.SRV).Select(r => new { Record = r, Content = r.GetDataReader().ReadSRVRecord() }).ToList();
         var ptrRecords = dnsResourceRecords.Where(r => r.Type == ResourceRecordType.PTR).Select(r => new { Record = r, Content = r.GetDataReader().ReadPTRRecord() }).ToList();
 
-        var builder = new StringBuilder();
+        /*var builder = new StringBuilder();
         builder.AppendLine("Received records:");
         foreach (var srvRecord in srvRecords)
             builder.AppendLine($" {srvRecord.Record.Name} {srvRecord.Record.Type} {srvRecord.Record.Class} TTL {srvRecord.Record.TimeToLive}: (Port: {srvRecord.Content.Port}, Target: {srvRecord.Content.Target}, Priority: {srvRecord.Content.Priority}, Weight: {srvRecord.Content.Weight})");
@@ -139,7 +139,7 @@ public class ServiceRecordAggregator
         lock (_lockObject)
         {
             //File.AppendAllText("records.txt", builder.ToString());
-        }
+        }*/
 
         List<DnsService> currentServices;
         lock (_currentServices)
