@@ -173,11 +173,7 @@ public class MDNSListener : IDisposable
             if (_cts?.IsCancellationRequested == true)
                 return;
 
-            var addresses = nics.SelectMany(v => v.GetIPProperties()
-                .UnicastAddresses
-                .Select(x => x.Address)
-                .Where(x => x.AddressFamily != AddressFamily.InterNetworkV6 || x.IsIPv6LinkLocal));
-
+            var addresses = Utilities.GetIPs(nics);
             foreach (var address in addresses)
             {
                 Console.WriteLine($"New address discovered {address}");
@@ -340,10 +336,7 @@ public class MDNSListener : IDisposable
                     DomainName = deviceDomainName
                 }));
 
-                var addresses = _nicMonitor.Current.SelectMany(v => v.GetIPProperties()
-                    .UnicastAddresses
-                    .Select(x => x.Address)).ToList();
-
+                var addresses = Utilities.GetIPs(_nicMonitor.Current);
                 foreach (var address in addresses)
                 {
                     if (address.AddressFamily == AddressFamily.InterNetwork)
