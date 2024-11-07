@@ -62,46 +62,53 @@ public class ServiceRecordAggregator
 
         _ = Task.Run(async () =>
         {
-            List<DnsService> currentServices;
-            while (!_cts.IsCancellationRequested)
+            try
             {
-                var now = DateTime.Now;
-
-                lock (_currentServices)
+                List<DnsService> currentServices;
+                while (_cts != null && !_cts.IsCancellationRequested)
                 {
-                    foreach (var pair in _cachedAddressRecords)
-                        pair.Value.RemoveAll(v => now > v.ExpirationTime);
+                    var now = DateTime.Now;
 
-                    var expiredTxtRecords = new List<string>();
-                    foreach (var pair in _cachedTxtRecords)
+                    lock (_currentServices)
                     {
-                        if (now > pair.Value.ExpirationTime)
-                            expiredTxtRecords.Add(pair.Key);
+                        foreach (var pair in _cachedAddressRecords)
+                            pair.Value.RemoveAll(v => now > v.ExpirationTime);
+
+                        var expiredTxtRecords = new List<string>();
+                        foreach (var pair in _cachedTxtRecords)
+                        {
+                            if (now > pair.Value.ExpirationTime)
+                                expiredTxtRecords.Add(pair.Key);
+                        }
+
+                        foreach (var expiredRecord in expiredTxtRecords)
+                            _cachedTxtRecords.Remove(expiredRecord);
+
+                        var expiredSrvRecords = new List<string>();
+                        foreach (var pair in _cachedSrvRecords)
+                        {
+                            if (now > pair.Value.ExpirationTime)
+                                expiredSrvRecords.Add(pair.Key);
+                        }
+
+                        foreach (var expiredRecord in expiredSrvRecords)
+                            _cachedSrvRecords.Remove(expiredRecord);
+
+                        foreach (var pair in _cachedPtrRecords)
+                            pair.Value.RemoveAll(v => now > v.ExpirationTime);
+
+                        currentServices = GetCurrentServices();
+                        _currentServices.Clear();
+                        _currentServices.AddRange(currentServices);
                     }
 
-                    foreach (var expiredRecord in expiredTxtRecords)
-                        _cachedTxtRecords.Remove(expiredRecord);
-
-                    var expiredSrvRecords = new List<string>();
-                    foreach (var pair in _cachedSrvRecords)
-                    {
-                        if (now > pair.Value.ExpirationTime)
-                            expiredSrvRecords.Add(pair.Key);
-                    }
-
-                    foreach (var expiredRecord in expiredSrvRecords)
-                        _cachedSrvRecords.Remove(expiredRecord);
-
-                    foreach (var pair in _cachedPtrRecords)
-                        pair.Value.RemoveAll(v => now > v.ExpirationTime);
-
-                    currentServices = GetCurrentServices();
-                    _currentServices.Clear();
-                    _currentServices.AddRange(currentServices);
+                    OnServicesUpdated?.Invoke(currentServices);
+                    await Task.Delay(TimeSpan.FromSeconds(5));
                 }
-
-                OnServicesUpdated?.Invoke(currentServices);
-                await Task.Delay(TimeSpan.FromSeconds(5));
+            }
+            catch (Exception e)
+            {
+                System.Diagnostics.Debug.WriteLine("Service record aggregator closed abruptly: " + e.ToString());
             }
         });
     }
