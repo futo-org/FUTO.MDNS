@@ -12,11 +12,6 @@
 		system = "x86_64-linux";
 		pkgs = nixpkgs.legacyPackages.${system};
 
-		getArch = system: nix2Net."${system}";
-		nix2Net = {
-			x86_64-linux = "linux-x64";
-		};
-
 		sourceRepo =
 			pkgs.fetchFromGitHub {
 				owner = "futo-org";
@@ -31,7 +26,7 @@
 				name = "futo-mdns";
 
 				src = "${sourceRepo}/FUTO.MDNS";
-				pubDir = "./bin/Release/net8.0/${getArch system}/publish";
+				dotnetInstallPath = "$out/lib";
 
 				meta = {
 					description = "FUTO's MDNS library";
