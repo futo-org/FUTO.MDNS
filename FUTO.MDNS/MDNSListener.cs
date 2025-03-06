@@ -33,6 +33,8 @@ public class MDNSListener : IDisposable
     private readonly List<(DnsResourceRecord Record, SRVRecord Content)> _recordsSRV = new();
     private readonly List<BroadcastService> _services = new();
 
+    
+
     public MDNSListener()
     {
         _nicMonitor.Added += OnNicsAdded;
@@ -42,7 +44,7 @@ public class MDNSListener : IDisposable
 
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
-        Console.WriteLine("Starting");
+        Logger.Info<MDNSListener>("Starting");
 
         lock (_lockObject)
         {
@@ -124,7 +126,7 @@ public class MDNSListener : IDisposable
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine($"Failed to send on {s.Client.LocalEndPoint}: {e.Message}.");
+                    Logger.Error<MDNSListener>($"Failed to send on {s.Client.LocalEndPoint}: {e.Message}.");
                 }
             }).ToArray();
         }
@@ -176,7 +178,7 @@ public class MDNSListener : IDisposable
             var addresses = Utilities.GetIPs(nics);
             foreach (var address in addresses)
             {
-                Console.WriteLine($"New address discovered {address}");
+                Logger.Info<MDNSListener>($"New address discovered {address}");
 
                 var localEndpoint = new IPEndPoint(address, MulticastPort);
                 var sender = new UdpClient(address.AddressFamily);
@@ -207,7 +209,7 @@ public class MDNSListener : IDisposable
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine($"Exception occurred when processing added address {address}: {e.Message}, {e.StackTrace}");
+                    Logger.Error<MDNSListener>($"Exception occurred when processing added address {address}: {e.Message}, {e.StackTrace}");
                     sender.Dispose();
                 }
             }
@@ -224,7 +226,7 @@ public class MDNSListener : IDisposable
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine($"Exception occurred when broadcasting records: {e.Message}, {e.StackTrace}");
+                    Logger.Error<MDNSListener>($"Exception occurred when broadcasting records: {e.Message}, {e.StackTrace}");
                 }
             });
         }
@@ -251,7 +253,7 @@ public class MDNSListener : IDisposable
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine($"Exception occurred when broadcasting records: {e.Message}, {e.StackTrace}");
+                    Logger.Error<MDNSListener>($"Exception occurred when broadcasting records: {e.Message}, {e.StackTrace}");
                 }
             });
         }
@@ -268,7 +270,7 @@ public class MDNSListener : IDisposable
             }
             catch (Exception e)
             {
-                Console.WriteLine($"An exception occurred while handling UDP result: '{e.Message}': {e.StackTrace}");
+                Logger.Error<MDNSListener>($"An exception occurred while handling UDP result: '{e.Message}': {e.StackTrace}");
             }
         }
     }
@@ -368,7 +370,7 @@ public class MDNSListener : IDisposable
                         }));
                     }
                     else
-                        Console.WriteLine($"Invalid address type: {address}.");
+                        Logger.Warning<MDNSListener>($"Invalid address type: {address}.");
                 }
 
                 if (service.Texts != null)
@@ -490,7 +492,7 @@ public class MDNSListener : IDisposable
         }
         catch (Exception e)
         {
-            Console.WriteLine("Failed to handle packet: " + e.Message + "\n" + e.StackTrace);
+            Logger.Info<MDNSListener>("Failed to handle packet: " + e.Message + "\n" + e.StackTrace);
         }
     }
 
